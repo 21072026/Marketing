@@ -1,0 +1,164 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  MARKETER
+}
+
+enum LeadStatus {
+  LEAD_NEW_100
+  LEAD_CONTACTED_200
+  LEAD_QUALIFIED_300
+  LEAD_PROPOSAL_SENT_400
+  LEAD_NEGOTIATION_500
+  LEAD_WON_600
+  LEAD_LOST_700
+  LEAD_UNQUALIFIED_800
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum InteractionType {
+  EMAIL
+  CALL
+  MEETING
+  NOTE
+}
+
+model User {
+  id                 String            @id @default(cuid())
+  email              String            @unique
+  name               String
+  role               UserRole          @default(MARKETER)
+  passwordHash       String
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  createdContacts    Contact[]         @relation("ContactCreatedBy")
+  createdLeads       Lead[]            @relation("LeadCreatedBy")
+  createdCampaigns   Campaign[]        @relation("CampaignCreatedBy")
+  createdInteractions Interaction[]    @relation("InteractionCreatedBy")
+  createdTasks       Task[]            @relation("TaskCreatedBy")
+  invitationsCreated InvitationToken[] @relation("InvitationCreatedBy")
+  assignedLeads      Lead[]            @relation("LeadAssignedTo")
+  assignedTasks      Task[]            @relation("TaskAssignedTo")
+}
+
+model InvitationToken {
+  id          String   @id @default(cuid())
+  email       String
+  role        UserRole
+  token       String   @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime @default(now())
+  createdById String
+  createdBy   User     @relation("InvitationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([email, expiresAt])
+}
+
+model Contact {
+  id          String   @id @default(cuid())
+  firstName   String
+  lastName    String
+  email       String?  @unique
+  phone       String?
+  company     String?
+  title       String?
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String
+  createdBy   User     @relation("ContactCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  leads       Lead[]
+}
+
+model Lead {
+  id           String      @id @default(cuid())
+  title        String
+  contactId    String?
+  contact      Contact?    @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  status       LeadStatus  @default(LEAD_NEW_100)
+  assignedToId String?
+  assignedTo   User?       @relation("LeadAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  campaignId   String?
+  campaign     Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  value        Decimal?    @db.Decimal(12, 2)
+  currency     String      @default("USD") @db.VarChar(3)
+  notes        String?     @db.Text
+  closedAt     DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  createdById  String
+  createdBy    User        @relation("LeadCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  interactions Interaction[]
+  tasks        Task[]
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([campaignId])
+  @@index([createdById])
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  name        String
+  description String?        @db.Text
+  status      CampaignStatus @default(DRAFT)
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      Decimal?       @db.Decimal(12, 2)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  createdById String
+  createdBy   User           @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  leads       Lead[]
+}
+
+model Interaction {
+  id          String          @id @default(cuid())
+  leadId      String
+  lead        Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type        InteractionType
+  subject     String?
+  body        String?         @db.Text
+  happenedAt  DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+  createdById String
+  createdBy   User            @relation("InteractionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([leadId, happenedAt])
+}
+
+model Task {
+  id           String   @id @default(cuid())
+  leadId       String
+  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?  @db.Text
+  dueDate      DateTime?
+  done         Boolean  @default(false)
+  doneAt       DateTime?
+  assignedToId String?
+  assignedTo   User?    @relation("TaskAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdById  String
+  createdBy    User     @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([leadId, dueDate])
+  @@index([assignedToId, done])
+}
