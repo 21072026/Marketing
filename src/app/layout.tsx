@@ -7,8 +7,8 @@ import { Providers } from "@/app/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Marketing CRM",
-  description: "A modern marketing CRM for leads, campaigns, contacts, and sales workflows.",
+  title: "SaleVali Marketing CRM",
+  description: "CRM for the SaleVali marketing team: track merchants, trials, and subscriptions.",
 };
 
 export default async function RootLayout({

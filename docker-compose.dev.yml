@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-marketing_crm}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-salevali_crm}
       MYSQL_USER: ${MYSQL_USER:-marketing}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-marketing}
     ports:

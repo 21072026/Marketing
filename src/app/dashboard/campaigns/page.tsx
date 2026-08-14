@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { CAMPAIGN_STATUS_LABELS, CAMPAIGN_STATUS_OPTIONS } from "@/lib/constants";
 import { getServerAuthSession } from "@/lib/auth";
+import { formatCurrency } from "@/lib/lifecycle";
 import { prisma } from "@/lib/prisma";
 import { campaignCreateSchema } from "@/lib/schemas";
 
@@ -14,7 +15,7 @@ export default async function CampaignsPage() {
     orderBy: { createdAt: "desc" },
     include: {
       _count: {
-        select: { leads: true },
+        select: { customers: true },
       },
       createdBy: {
         select: { name: true },
@@ -60,14 +61,15 @@ export default async function CampaignsPage() {
       <div>
         <h1 className="text-3xl font-bold text-slate-900">Campaigns</h1>
         <p className="mt-2 text-sm text-slate-500">
-          Coordinate launch windows, budget, and sourced opportunities by campaign.
+          Acquisition channels that bring merchants to SaleVali — affiliates, ad sets,
+          consultant partnerships, and events. Attribution only: customers are the records we track.
         </p>
       </div>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Create campaign</h2>
         <form action={createCampaignAction} className="mt-5 grid gap-4 md:grid-cols-2">
-          <input className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none ring-emerald-500 focus:border-emerald-500 focus:ring md:col-span-2" name="name" placeholder="Q4 Product Launch" required />
+          <input className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none ring-emerald-500 focus:border-emerald-500 focus:ring md:col-span-2" name="name" placeholder="Amazon seller webinar Q4" required />
           <select className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none ring-emerald-500 focus:border-emerald-500 focus:ring" defaultValue={CampaignStatus.DRAFT} name="status">
             {CAMPAIGN_STATUS_OPTIONS.map((status) => (
               <option key={status} value={status}>
@@ -99,12 +101,12 @@ export default async function CampaignsPage() {
                   <h2 className="mt-2 text-xl font-semibold text-slate-900">{campaign.name}</h2>
                 </div>
                 <div className="text-right text-sm font-semibold text-slate-900">
-                  {campaign.budget ? `$${campaign.budget.toString()}` : "No budget"}
+                  {campaign.budget ? formatCurrency(Number(campaign.budget.toString())) : "No budget"}
                 </div>
               </div>
               <p className="mt-4 text-sm text-slate-600">{campaign.description ?? "No campaign description yet."}</p>
               <div className="mt-5 flex flex-wrap gap-3 text-xs text-slate-500">
-                <span>Leads: {campaign._count.leads}</span>
+                <span>Customers sourced: {campaign._count.customers}</span>
                 <span>Created by {campaign.createdBy.name}</span>
                 <span>
                   {campaign.startDate ? campaign.startDate.toLocaleDateString() : "No start date"} →{" "}

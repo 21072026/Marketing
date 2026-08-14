@@ -51,7 +51,7 @@ export default function LoginPage() {
           </p>
           <h1 className="text-3xl font-bold text-slate-900">Welcome back</h1>
           <p className="text-sm text-slate-500">
-            Sign in to manage leads, campaigns, contacts, and follow-ups.
+            Sign in to manage SaleVali customers, trials, and follow-ups.
           </p>
         </div>
 

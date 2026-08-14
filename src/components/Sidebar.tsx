@@ -2,14 +2,14 @@
 
 import { UserRole } from "@prisma/client";
 import clsx from "clsx";
-import { BarChart3, BriefcaseBusiness, LogOut, Megaphone, Users, UserSquare2 } from "lucide-react";
+import { BarChart3, Building2, LogOut, Megaphone, Users, UserSquare2 } from "lucide-react";
 import { signOut } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const baseNavigation = [
   { href: "/dashboard", label: "Overview", icon: BarChart3 },
-  { href: "/dashboard/leads", label: "Leads", icon: BriefcaseBusiness },
+  { href: "/dashboard/customers", label: "Customers", icon: Building2 },
   { href: "/dashboard/contacts", label: "Contacts", icon: Users },
   { href: "/dashboard/campaigns", label: "Campaigns", icon: Megaphone },
 ];
@@ -30,8 +30,8 @@ export function Sidebar({
   return (
     <aside className="flex w-full flex-col border-b border-slate-200 bg-slate-950 text-slate-100 lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r">
       <div className="border-b border-slate-800 px-6 py-6">
-        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-emerald-400">Marketing CRM</p>
-        <h2 className="mt-3 text-xl font-semibold">Pipeline workspace</h2>
+        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-emerald-400">SaleVali CRM</p>
+        <h2 className="mt-3 text-xl font-semibold">Customer acquisition</h2>
         <p className="mt-2 text-sm text-slate-400">
           {name ?? "Team member"} · {role.toLowerCase()}
         </p>
