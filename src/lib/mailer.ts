@@ -22,6 +22,20 @@ function getTransporter() {
   });
 }
 
+/// Open an SMTP connection and authenticate, without sending anything.
+///
+/// Surfaced through `/api/health?smtp=1` so a broken mail configuration is
+/// visible to monitoring instead of being discovered when someone reports an
+/// invitation that never arrived.
+export async function verifySmtpConnection(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await getTransporter().verify();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "SMTP verification failed" };
+  }
+}
+
 export async function sendInvitationEmail({
   to,
   role,

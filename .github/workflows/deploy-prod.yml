@@ -1,0 +1,190 @@
+name: Deploy prod (hosted build → server swap)
+
+# Production deploy. The image is BUILT ON A GITHUB-HOSTED RUNNER
+# (build-image.yml) and pushed to ghcr; the server only pulls it and swaps the
+# container. Nothing compiles on the production box — keep it that way.
+#
+# HOW IT TRIGGERS
+#   push to main   → deploy (PRs already passed the smoke gate before merging)
+#   every 6 hours  → deploy ONLY if prod drifted from origin/main; the
+#                    self-hosted runner can be offline when a push arrives and
+#                    that deploy would otherwise be lost silently. A no-op when
+#                    prod is already current.
+#   manual         → deploy any branch/tag/SHA, unconditionally.
+#
+# PREREQUISITES (one-time, on the server):
+#   1. Register a self-hosted runner for this repo (Settings → Actions → Runners)
+#      and install it as a service.
+#   2. Create /etc/salevali-crm/prod.env (chmod 600) with the production secrets
+#      — see infra/README.md. The runner's user must be able to read it and run
+#      docker.
+#
+# Until both exist this workflow cannot run; that is deliberate — the
+# alternative is putting an SSH key and every application secret into GitHub.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Drift safety net.
+    - cron: "53 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/tag/SHA to deploy (default: main)"
+        required: false
+        default: "main"
+
+# Never cancel a deploy mid-container-swap — queue instead. Queued runs are
+# cheap: the drift gate turns a run whose commit is already live into a no-op.
+concurrency:
+  group: deploy-prod-self-hosted
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. Gate (on the server: one curl + one ls-remote) ───────────────────────
+  gate:
+    name: Check for drift
+    runs-on: self-hosted
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decide whether a deploy is needed
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ inputs.ref || 'main' }}
+          HEALTH_URL: http://127.0.0.1:3300/api/health
+        run: |
+          # Resolve the exact commit to deploy. Everything downstream — the image
+          # tag, the GIT_SHA baked into it, the forward-only guard — is pinned to
+          # this one sha so the build and the deploy can never disagree.
+          #
+          # Automatic runs target the TIP of origin/main rather than github.sha: a
+          # run that queued behind a newer one must not land an older commit on
+          # top of it.
+          if [ "$EVENT" = workflow_dispatch ]; then
+            SHA="$(git ls-remote origin "refs/heads/$REF" | cut -f1)"
+            [ -n "$SHA" ] || SHA="$(git ls-remote origin "refs/tags/$REF" | cut -f1)"
+            [ -n "$SHA" ] || SHA="$REF"   # not a branch or tag — assume a raw sha
+          else
+            SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+          fi
+          [ -n "$SHA" ] || { echo "could not resolve '$REF'" >&2; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          TARGET="${SHA:0:7}"
+
+          # A manual dispatch is the explicit override: always deploy, even the
+          # commit that is already live (that is how you force a rebuild).
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "### Production: deploying \`$REF\` (\`$TARGET\`, manual dispatch)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Ground truth for what is actually live: the container reports the
+          # GIT_SHA baked into its image at /api/health. An unreachable endpoint
+          # (container down or wedged) counts as drift, so the deploy repairs it.
+          HEALTH_ENV="${ENV_FILE:-/etc/salevali-crm/prod.env}"
+          [ -r "$HEALTH_ENV" ] && HEALTH_TOKEN="$( set -a; . "$HEALTH_ENV" >/dev/null 2>&1; printf '%s' "${HEALTH_TOKEN:-}" )"
+          if [ -n "${HEALTH_TOKEN:-}" ]; then
+            LIVE="$(curl -fsS --max-time 10 -H "X-Health-Token: $HEALTH_TOKEN" "$HEALTH_URL" \
+                    | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+          else
+            LIVE="$(curl -fsS --max-time 10 "$HEALTH_URL" \
+                    | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+          fi
+
+          if [ "$LIVE" = "$TARGET" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "### Production already current at \`$TARGET\` — nothing to deploy" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "### Production drifted: live \`${LIVE:-unreachable}\` → deploying \`$TARGET\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── 2. Build (GitHub-hosted — the expensive part) ───────────────────────────
+  build:
+    name: Build image
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      ref: ${{ needs.gate.outputs.sha }}
+      tag: prod-${{ needs.gate.outputs.sha }}
+      app_env: production
+
+  # ── 3. Swap (on the server: pull + db push + restart) ───────────────────────
+  deploy:
+    name: Swap production container
+    needs: [gate, build]
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout ${{ needs.gate.outputs.sha }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          # Full history: the forward-only guard in deploy-prod.sh asks
+          # `git merge-base --is-ancestor` whether this commit predates the live
+          # one, which a shallow clone cannot answer.
+          fetch-depth: 0
+
+      - name: Deploy
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x infra/deploy-prod.sh
+          # --pull-image: the image was built on the hosted runner, so this box
+          #   only fetches it.
+          # --no-pull: the checkout above already pinned the exact commit the
+          #   image was built from; do not re-sync to a moving tip.
+          # FORWARD_ONLY=1 makes prod refuse to regress to an older commit
+          #   (FORCE=1 for a deliberate rollback).
+          FORWARD_ONLY=1 \
+          ENV_FILE="${ENV_FILE:-/etc/salevali-crm/prod.env}" \
+          ./infra/deploy-prod.sh --no-pull --pull-image
+
+  # ── 4. Alert ────────────────────────────────────────────────────────────────
+  # A failed deploy leaves the container swapped out (docker stop precedes docker
+  # run), so silence here is the worst case: the env can be down with nothing but
+  # a red tick in the Actions tab to say so. Separate GitHub-hosted job on
+  # purpose — an alert that needs the server to be healthy is an alert that may
+  # never send.
+  notify:
+    name: Email alert on failure
+    needs: [gate, build, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Send alert email
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_SUBJECT: "⚠️ SaleVali Marketing CRM — production deploy FAILED"
+          ALERT_BODY: |
+            The production deploy of ${{ needs.gate.outputs.sha || 'main' }} failed (event: ${{ github.event_name }}).
+            The production container may be down or serving an older build — check before assuming a merge is live.
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/send-alert-email.mjs

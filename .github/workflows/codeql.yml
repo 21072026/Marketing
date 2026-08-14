@@ -1,0 +1,56 @@
+# Static application security testing.
+#
+# CodeQL catches a slice of the security-bug class automatically — SSRF, header
+# injection, ReDoS-prone regexes, sensitive data reaching logs. It will NOT catch
+# role-scoping bugs, which are usually the more serious ones in a CRM; that is
+# what the authorization assertions in e2e/auth.spec.ts are for. The two are
+# complements, not alternatives.
+#
+# Deliberately NOT a required check. The first run on an existing codebase always
+# surfaces a backlog, and blocking every PR on triage that has not happened yet
+# just teaches people to ignore the gate. Findings land in the Security tab; make
+# it required once the backlog is at zero.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly published query still finds old code.
+    - cron: "27 4 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # security-extended adds lower-confidence queries. Worth the noise on a
+          # codebase holding customer contact data; drop back to the default set
+          # if triage becomes busywork.
+          queries: security-extended
+
+      # No build step: the JS/TS extractor reads source directly, and a Next.js
+      # production build would only add minutes without improving the analysis.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript

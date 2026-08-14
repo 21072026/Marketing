@@ -1,0 +1,54 @@
+# Dependency vulnerability gate.
+#
+# Makes the number visible on every PR and in the job summary, and blocks only on
+# `critical`. A gate that is always red is a gate everyone learns to scroll past;
+# tighten it to `high` once the tree is clean — the change is one word.
+name: Security audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly published advisory against unchanged code still shows up
+    # rather than waiting for someone to open a PR.
+    - cron: "17 5 * * 1"
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` would also run the postinstall `prisma generate`; the audit only
+      # needs the lockfile, so skip the install entirely.
+      - name: Audit
+        run: |
+          set -o pipefail
+          npm audit --json > audit.json || true
+
+          summary() { node -e '
+            const a = JSON.parse(require("fs").readFileSync("audit.json", "utf8"));
+            const m = a.metadata.vulnerabilities;
+            const rows = Object.entries(a.vulnerabilities || {})
+              .map(([name, v]) => `| ${v.severity} | \`${name}\` | ${v.fixAvailable === false ? "no fix published" : "fix available"} |`)
+              .sort();
+            console.log(`### npm audit — ${m.critical} critical · ${m.high} high · ${m.moderate} moderate · ${m.low} low\n`);
+            if (rows.length) console.log(["| Severity | Package | Fix |", "|---|---|---|", ...rows].join("\n"));
+            else console.log("No known vulnerabilities.");
+            process.exitCode = m.critical > 0 ? 1 : 0;
+          '; }
+
+          summary | tee -a "$GITHUB_STEP_SUMMARY"
+          # tee swallows the exit code of the pipeline's left side without
+          # pipefail; with it, a critical finding fails the job.
+          summary > /dev/null

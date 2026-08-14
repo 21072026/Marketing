@@ -1,6 +1,6 @@
 {
   "name": "salevali-marketing-crm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "prisma": {
@@ -14,7 +14,10 @@
     "postinstall": "prisma generate",
     "db:dev:up": "docker compose -f docker-compose.dev.yml up -d",
     "db:dev:down": "docker compose -f docker-compose.dev.yml down",
-    "seed": "node prisma/seed.mjs"
+    "seed": "node prisma/seed.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke",
+    "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "@prisma/client": "^5.16.1",
@@ -29,6 +32,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/nodemailer": "^6.4.17",
@@ -48,5 +52,6 @@
     "next-auth": {
       "nodemailer": "$nodemailer"
     }
-  }
+  },
+  "author": "Mehmet Erşahin"
 }

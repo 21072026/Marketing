@@ -1,22 +1,60 @@
-FROM node:20-alpine AS deps
+# ---- dependencies ----
+FROM node:20-slim AS deps
 WORKDIR /app
 COPY package*.json ./
-COPY prisma ./prisma
-RUN npm ci
+# --ignore-scripts skips the postinstall `prisma generate`, which needs
+# prisma/schema.prisma — not available in this layer. The builder stage runs
+# `prisma generate` explicitly once all source files are present.
+RUN npm ci --ignore-scripts
 
-FROM node:20-alpine AS builder
+# ---- builder ----
+FROM node:20-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/prisma ./prisma
 COPY . .
+
+# No DB connection is needed to generate the client.
+RUN npx prisma generate
+
+# Deployment flavour ('production' | 'preview'). NEXT_PUBLIC_* is inlined at
+# build time, so it has to be present here rather than only at runtime.
+ARG NEXT_PUBLIC_APP_ENV=production
+
+# Dummy values so Next.js can analyse routes without a live database. Real
+# secrets are injected at runtime via `docker run -e`; nothing secret is baked
+# into the image.
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_APP_ENV=$NEXT_PUBLIC_APP_ENV \
+    DATABASE_URL="mysql://build:build@127.0.0.1:3306/build" \
+    NEXTAUTH_SECRET="build-placeholder" \
+    NEXTAUTH_URL="http://localhost:3000"
+
 RUN npm run build
 
-FROM node:20-alpine AS runner
+# ---- runner ----
+FROM node:20-slim AS runner
 WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# Commit SHA baked in at build time (CI passes --build-arg GIT_SHA). Reported by
+# /api/health, which is what the deploy drift gate reads to decide whether the
+# live container is current.
+ARG GIT_SHA=dev
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    GIT_SHA=$GIT_SHA
+
+# OpenSSL is required by the Prisma engines, both at runtime and for the
+# `prisma db push` / `prisma migrate diff` the deploy script runs from this image.
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.js ./next.config.js
+# Schema + seed scripts: needed for `prisma db push` and the seeders the deploy
+# runs as one-off containers.
 COPY --from=builder /app/prisma ./prisma
+
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["npm", "start"]

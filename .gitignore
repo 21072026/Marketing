@@ -18,3 +18,9 @@ pnpm-debug.log*
 *.tsbuildinfo
 prisma/*.db
 prisma/*.db-journal
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

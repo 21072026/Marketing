@@ -431,6 +431,7 @@ export default async function CustomerDetailPage({
                 <div
                   key={integration.id}
                   className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm"
+                  data-testid="customer-channel"
                 >
                   <span className="font-medium text-slate-800">
                     {INTEGRATION_CHANNEL_LABELS[integration.channel]}

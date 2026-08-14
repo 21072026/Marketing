@@ -113,6 +113,7 @@ Billing runs via SEPA direct debit, so each customer carries a `sepaMandateStatu
 - `GET|POST /api/contacts` — optional `customerId` filter
 - `GET|POST /api/campaigns`
 - `GET /api/users`, `POST /api/users/invite`, `POST /api/register`
+- `GET /api/health` — liveness (`?db=1`, `?smtp=1`); detailed fields gated on `HEALTH_TOKEN`
 
 ## Roles
 
@@ -160,12 +161,35 @@ Billing runs via SEPA direct debit, so each customer carries a `sepaMandateStatu
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Testing
+
+```bash
+npm run test:e2e         # full Playwright suite (starts the app itself)
+npm run test:e2e:smoke   # the @smoke subset — what the PR gate runs
+```
+
+See [`docs/testing.md`](docs/testing.md) for what is covered and how to write a
+spec that is not flaky.
+
+## Deployment
+
+The image is built on a GitHub-hosted runner and pushed to ghcr.io; the server's
+self-hosted runner pulls it, backs up the database, runs the destructive-schema
+guard, applies the schema, swaps the container and health-checks it. Nothing
+compiles on the server. See [`infra/README.md`](infra/README.md).
+
+## Where the work goes next
+
+[`docs/BACKLOG.md`](docs/BACKLOG.md) — the deferred work, with the reasoning and
+a first slice for each item.
+
 ## Required environment variables
 
 ```env
 DATABASE_URL=
 NEXTAUTH_URL=
 NEXTAUTH_SECRET=
+HEALTH_TOKEN=
 SMTP_HOST=
 SMTP_PORT=
 SMTP_USER=

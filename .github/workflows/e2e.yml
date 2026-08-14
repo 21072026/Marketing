@@ -1,0 +1,99 @@
+name: E2E Tests
+
+on:
+  # The @smoke-only PR gate. Cheap enough to run on every PR; the full suite runs
+  # on a schedule (e2e-full.yml) so the gate stays fast as the suite grows.
+  # A manual run takes an optional Playwright --grep filter, so a single
+  # non-smoke spec can be re-verified on a branch without the whole suite.
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: "Playwright --grep filter (e.g. @smoke, or a test title)"
+        required: false
+        default: "@smoke"
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref so the gate stays fast.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright smoke
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: salevali_crm_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+    env:
+      DATABASE_URL: "mysql://root:root@127.0.0.1:3306/salevali_crm_test"
+      NEXTAUTH_SECRET: "ci-test-secret-not-for-production"
+      NEXTAUTH_URL: "http://localhost:3000"
+      # The seeded admin the specs sign in as.
+      SEED_ADMIN_EMAIL: "admin@example.com"
+      SEED_ADMIN_PASSWORD: "ChangeMe123!"
+      SEED_ADMIN_NAME: "SaleVali Marketing Admin"
+      ADMIN_EMAIL: "admin@example.com"
+      ADMIN_PASSWORD: "ChangeMe123!"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply DB schema
+        run: npx prisma db push
+
+      - name: Seed admin user
+        run: npx prisma db seed
+
+      - name: Build app
+        run: npm run build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # The filter is passed through an env var rather than interpolated into the
+      # shell — a dispatch input is untrusted text.
+      - name: Run E2E tests
+        env:
+          E2E_GREP: ${{ inputs.grep || '@smoke' }}
+        run: npx playwright test --grep "$E2E_GREP"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
