@@ -60,24 +60,40 @@ test("an anonymous caller sees liveness only, not the version or sha", { tag: "@
   expect((await wrong.json()).version).toBeUndefined();
 });
 
-test("an anonymous caller cannot make the server open a DB or SMTP connection", { tag: "@smoke" }, async ({ request }) => {
+test("an anonymous caller cannot make the server open a DB connection", { tag: "@smoke" }, async ({ request }) => {
   test.skip(!local, "a deployed env may not have HEALTH_TOKEN configured");
 
-  // `?db=1` and `?smtp=1` are query parameters. If they decided on their own
-  // whether the server opens a database connection or an SMTP session, anyone
-  // could make this box do work on demand — and read the SMTP error back to
-  // probe the mail configuration. The subsystem checks are for operators.
-  const response = await request.get("/api/health?db=1&smtp=1");
+  // `?db=1` is a query parameter. If it decided on its own whether the server
+  // opens a database connection, anyone could make this box do work on demand.
+  const response = await request.get("/api/health?db=1");
   expect(response.status()).toBe(200);
-
-  const body = await response.json();
-  expect(body.db).toBeUndefined();
-  expect(body.smtp).toBeUndefined();
-  expect(body.smtpError).toBeUndefined();
+  expect((await response.json()).db).toBeUndefined();
 
   // The same request from an operator still does the work.
   const authorized = await request.get("/api/health?db=1", {
     headers: { "X-Health-Token": E2E_HEALTH_TOKEN },
   });
   expect(["ok", "error"]).toContain((await authorized.json()).db);
+});
+
+test("the SMTP check is a route of its own and requires authorization", { tag: "@smoke" }, async ({ request }) => {
+  test.skip(!local, "a deployed env may not have HEALTH_TOKEN configured");
+
+  // Opening an SMTP session is the most side-effecting thing any probe here
+  // does, and its error text describes the mail configuration. An anonymous
+  // caller must not be able to trigger it at all — not even to learn that it
+  // failed.
+  const anonymous = await request.get("/api/health/smtp");
+  expect(anonymous.status()).toBe(401);
+  const body = await anonymous.json();
+  expect(body.smtp).toBeUndefined();
+  expect(body.error).toBe("Unauthorized");
+
+  // An operator gets a real answer. CI has no SMTP configured, so "error" is
+  // the expected result there — what matters is that the check ran.
+  const authorized = await request.get("/api/health/smtp", {
+    headers: { "X-Health-Token": E2E_HEALTH_TOKEN },
+  });
+  expect([200, 503]).toContain(authorized.status());
+  expect(["ok", "error"]).toContain((await authorized.json()).smtp);
 });

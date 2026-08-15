@@ -31,9 +31,11 @@ ticket.
   detailed fields (version, git sha, subsystem status) are released only to an
   admin session or a caller holding `HEALTH_TOKEN` — those fields are a
   ready-made answer to "which CVEs apply to this deployment?". The optional
-  `?db=1` / `?smtp=1` subsystem checks are gated on the same authorization, so
-  an anonymous caller cannot make the server open a database or SMTP connection
-  on demand, nor read an SMTP error back to probe the mail configuration.
+  `?db=1` check is gated on the same authorization, so an anonymous caller
+  cannot make the server open a database connection on demand. The SMTP check
+  is a separate route (`/api/health/smtp`) that answers `401` to anyone
+  unauthorized — opening a mail session is the most side-effecting thing any
+  probe does here, and its error text describes the mail configuration.
 - **Dependencies**: Dependabot weekly; `npm audit` on every PR, blocking on
   `critical` (`security-audit.yml`).
 - **Static analysis**: CodeQL (`security-extended`) on push, PR and weekly.

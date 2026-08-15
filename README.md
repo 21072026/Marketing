@@ -113,7 +113,8 @@ Billing runs via SEPA direct debit, so each customer carries a `sepaMandateStatu
 - `GET|POST /api/contacts` — optional `customerId` filter
 - `GET|POST /api/campaigns`
 - `GET /api/users`, `POST /api/users/invite`, `POST /api/register`
-- `GET /api/health` — liveness (`?db=1`, `?smtp=1`); detailed fields gated on `HEALTH_TOKEN`
+- `GET /api/health` — liveness (`?db=1` for DB connectivity); detailed fields gated on `HEALTH_TOKEN`
+- `GET /api/health/smtp` — SMTP connectivity check; requires an admin session or `HEALTH_TOKEN`
 
 ## Roles
 

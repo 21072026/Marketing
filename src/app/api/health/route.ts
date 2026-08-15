@@ -1,9 +1,6 @@
-import { UserRole } from "@prisma/client";
-import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
-import { getServerAuthSession } from "@/lib/auth";
-import { verifySmtpConnection } from "@/lib/mailer";
+import { maySeeHealthDetail } from "@/lib/health";
 import { prisma } from "@/lib/prisma";
 import { APP_ENV, APP_VERSION, GIT_SHA } from "@/lib/version";
 
@@ -11,55 +8,21 @@ import { APP_ENV, APP_VERSION, GIT_SHA } from "@/lib/version";
 // deploy pipeline: `infra/deploy-prod.sh` and the drift gate in
 // .github/workflows/deploy-prod.yml read `sha` from here to decide what is
 // actually live. Always cheap by default; pass ?db=1 to also verify database
-// connectivity, or ?smtp=1 to verify SMTP (no message is sent). Never touches
-// or mutates domain data.
+// connectivity. Never touches or mutates domain data.
+//
+// SMTP verification lives at /api/health/smtp instead of behind a query
+// parameter here — see the note in that route.
 export const dynamic = "force-dynamic";
-
-/**
- * Whether this caller may see the detailed fields.
- *
- * Liveness stays public — a monitor cannot log in. The detail (version, git
- * sha, subsystem status) is a ready-made answer to "which CVEs apply to this
- * deployment?", so it is released only to an admin session or a caller holding
- * HEALTH_TOKEN.
- *
- * With HEALTH_TOKEN unset the endpoint stays fully public. That is deliberate:
- * the deploy gate reads `sha` from here, and defaulting to closed would blind
- * it before anyone had configured a token.
- */
-async function maySeeDetailFor(request: Request): Promise<boolean> {
-  const expected = process.env.HEALTH_TOKEN;
-
-  if (!expected) {
-    return true;
-  }
-
-  const got = request.headers.get("x-health-token") ?? "";
-
-  try {
-    if (got.length === expected.length && timingSafeEqual(Buffer.from(got), Buffer.from(expected))) {
-      return true;
-    }
-  } catch {
-    // Fall through to the session check.
-  }
-
-  const session = await getServerAuthSession();
-  return session?.user.role === UserRole.ADMIN;
-}
 
 export async function GET(request: Request) {
   const started = Date.now();
   const params = new URL(request.url).searchParams;
 
-  // Authorize BEFORE doing any of the optional work. `?db=1` and `?smtp=1` are
-  // query parameters, so letting them decide on their own whether the server
-  // opens a database connection or an SMTP session hands an anonymous caller a
-  // way to make this box do work on demand — and, with `?smtp=1`, to probe the
-  // mail configuration by reading the error back. CodeQL flags exactly this
-  // shape. The subsystem checks are for operators, so gate them on the same
-  // authorization as the detailed fields below.
-  const maySeeDetail = await maySeeDetailFor(request);
+  // Authorize BEFORE doing any of the optional work. `?db=1` is a query
+  // parameter, so letting it decide on its own whether the server opens a
+  // database connection hands an anonymous caller a way to make this box do
+  // work on demand.
+  const maySeeDetail = await maySeeHealthDetail(request);
 
   let db: "ok" | "error" | "skipped" = "skipped";
 
@@ -72,16 +35,7 @@ export async function GET(request: Request) {
     }
   }
 
-  let smtp: "ok" | "error" | "skipped" = "skipped";
-  let smtpError: string | undefined;
-
-  if (maySeeDetail && params.get("smtp") === "1") {
-    const result = await verifySmtpConnection();
-    smtp = result.ok ? "ok" : "error";
-    smtpError = result.error;
-  }
-
-  const healthy = db !== "error" && smtp !== "error";
+  const healthy = db !== "error";
   const status = healthy ? "ok" : "degraded";
 
   // An anonymous caller learns whether the app is up, and nothing else. The
@@ -101,8 +55,6 @@ export async function GET(request: Request) {
       sha: GIT_SHA,
       env: APP_ENV,
       db,
-      smtp,
-      ...(smtpError ? { smtpError } : {}),
       uptimeMs: Math.round(process.uptime() * 1000),
       responseMs: Date.now() - started,
       timestamp: new Date().toISOString(),
