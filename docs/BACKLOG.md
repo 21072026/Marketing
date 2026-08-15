@@ -1,157 +1,71 @@
 # Backlog
 
-Work that is real but too large to land alongside the current change. Each entry
-says what it is, why it matters for *selling SaleVali*, and what the first slice
-would be — so picking one up does not start with re-deriving the reasoning.
+Every piece of planned work for the SaleVali Marketing CRM, broken into slices
+small enough to pick up and finish in one sitting.
 
-Ordered roughly by value per unit of effort.
-
----
-
-## 1. Turkish / German UI (i18n)
-
-**Why.** SaleVali itself ships in DE / EN / TR, and the marketing team is
-German- and Turkish-speaking. The CRM is English-only. Every stage label,
-badge and empty state is currently a hard-coded string.
-
-**First slice.** Extract all user-facing strings into `src/i18n/{de,en,tr}.ts`,
-a `t()` helper reading the user's locale, and a CI check that the three files
-have identical key sets (the reference project's `check:i18n` script is the
-model). Do the extraction before adding more screens, not after.
-
-**Size.** Large — it touches every component. Cheaper now than in six months.
+**Written in English. Each item carries a one-line German and Turkish summary**
+(`DE:` / `TR:`) so the whole team can scan the board without reading the detail.
 
 ---
 
-## 2. Trial expiry reminders (scheduled job + email)
+## How this maps onto the board
 
-**Why.** SaleVali trials run 30 days and **never auto-renew**. A trial that
-expires unattended is a customer lost in silence. Today the dashboard shows a
-7-day warning panel — which only helps someone who opens the dashboard.
+Nothing here is invented — these are the fields the GitHub board already has.
 
-**First slice.** A cron entry (`node-cron` in-process, or an authenticated
-`/api/cron/trial-reminders` called by systemd) that emails the assigned marketer
-at T-7 / T-3 / T-0, plus a `Setting` row baselining "already notified" so
-turning it on does not email the entire back catalogue at once.
+| Backlog concept | On the board |
+| --- | --- |
+| **Epic** | Issue type `Feature`, title prefixed `Epic:` |
+| **Story** | Issue type `Feature`, a **sub-issue** of its epic |
+| **Task** | Issue type `Task`, a **sub-issue** of its story |
+| Priority | `Priority` field: **Urgent · High · Medium · Low** |
+| Difficulty | `Effort` field: **Low** (easy) · **Medium** · **High** (hard) |
+| Newcomer-friendly | `good first issue` label |
+| Defects found later | Issue type `Bug` |
 
-**Size.** Medium. Needs the reference project's cron-baseline trick to be safe.
+Each task also ships a **ready-to-use prompt** — paste it into Claude Code (or
+hand it to a developer) and it contains enough context to start without reading
+the whole repository.
 
----
+## Epics
 
-## 3. Self-service onboarding of the SaleVali signup funnel
+| # | Epic | Priority | Why it matters | Tasks |
+| --- | --- | --- | --- | --- |
+| [1](backlog/epic-01-import.md) | Import the existing customer base | Urgent | Until the real customers are in, the team keeps using the spreadsheet and the CRM is a parallel universe | 10 |
+| [2](backlog/epic-02-trials.md) | Never lose a trial | Urgent | SaleVali trials run 30 days and never auto-renew — an unattended expiry is a customer lost in silence | 11 |
+| [3](backlog/epic-03-analytics.md) | See the funnel | High | `StageChange` already records every transition; nothing reads it yet | 13 |
+| [4](backlog/epic-04-i18n.md) | German and Turkish UI | High | SaleVali ships DE/EN/TR and the team speaks German and Turkish; the CRM is English-only | 10 |
+| [5](backlog/epic-05-operations.md) | Deploy it and keep it running | High | The pipeline is written but has never run: no server, no runner, no backups on a schedule | 9 |
+| [6](backlog/epic-06-access.md) | Access control and data protection | High | Every role sees every customer, nothing is logged, and there is no way to erase a person | 8 |
+| [7](backlog/epic-07-workflow.md) | Daily workflow | Medium | A customer cannot be edited after creation. The tool has to be pleasant or it will not be used | 13 |
+| [8](backlog/epic-08-quality.md) | Test coverage and guardrails | Medium | Six flows are covered; invitations, campaigns and role gating are not | 7 |
+| [9](backlog/epic-09-product-signals.md) | Signals from the SaleVali product | Low | Usage is the strongest churn predictor, and today every number is typed in by hand | 8 |
 
-**Why.** Merchants register on salevali.de and start a trial without anyone in
-the CRM knowing. Someone re-types them by hand, or they are never tracked.
+**9 epics · 22 stories · 89 tasks**, of which **30** are marked `good first issue`.
 
-**First slice.** An authenticated ingest endpoint
-(`POST /api/customers/ingest`, shared-secret header) that the SaleVali app calls
-on signup, creating a `Customer` at `TRIAL_ACTIVE_500` with `source =
-WEBSITE_TRIAL` and the connected channels. Idempotent on VAT ID or company +
-country, so a repeat call updates rather than duplicates.
+Across the 89 tasks:
 
-**Size.** Medium, and it needs a decision from the SaleVali side about who calls
-whom.
+- **Effort** — 35 Low, 52 Medium, 2 High. Most are meant to be finished in one sitting.
+- **Priority** — 13 Urgent, 30 High, 28 Medium, 18 Low.
 
----
+## Suggested order
 
-## 4. Usage-driven health signals
+1. **Epic 1** first. Everything else operates on data that does not exist yet:
+   no customers means no trials to remind about and no transitions to chart.
+2. **Epic 2** next — the highest-value feature, and meaningful once there is data.
+3. **Epic 5** in parallel with 1–2; it is mostly server work and blocks nothing
+   else, but nothing is real until it is deployed.
+4. **Epic 3** after a few weeks of transitions have accumulated.
+5. **Epic 4** after 1–3. Those epics add new strings; doing i18n first means
+   translating everything twice.
+6. **Epics 6–9** as the team and the customer base grow.
 
-**Why.** The strongest churn predictor for an ERP is usage: a merchant whose
-transaction volume drops for two weeks is leaving, whatever the CRM says. `mrr`
-and `monthlyTransactions` are typed in by hand today, so they are stale by
-definition.
+## Conventions for whoever picks one up
 
-**First slice.** A nightly sync of per-customer transaction counts from the
-SaleVali database into a `CustomerUsage` table (date, transactions, orders), a
-sparkline on the customer record, and a "volume dropped >40% month over month"
-filter on the customer list.
-
-**Size.** Large. Depends on read access to SaleVali's data.
-
----
-
-## 5. Reporting and funnel analytics
-
-**Why.** `StageChange` already records every transition with a timestamp, so
-conversion rates and time-in-stage are computable — nothing reads them yet.
-
-**First slice.** `/dashboard/analytics`: trial → paying conversion rate by month
-and by source, median days in each stage, MRR trend, and churn by cohort. Read
-straight from `StageChange`; no new writes needed.
-
-**Size.** Medium.
-
----
-
-## 6. Per-PR preview environments
-
-**Why.** `deploy-preview.yml` tracks `main`, so two PRs in flight cannot be
-reviewed side by side. The reference project solves this with topic
-environments (`topic-preview.yml` / `topic-teardown.sh`): a container and
-subdomain per PR, torn down on merge.
-
-**First slice.** Port `topic-deploy.sh` + `topic-teardown.sh`, a wildcard TLS
-cert, and a PR-comment bot posting the URL.
-
-**Size.** Medium, mostly server-side setup. Do it when more than one person is
-reviewing at a time.
-
----
-
-## 7. Role scoping that actually restricts
-
-**Why.** `MARKETER`, `MANAGER` and `ADMIN` exist, but apart from delete
-permissions and the Users page, every role sees and edits every customer. That
-is fine for a small in-house team and wrong the moment freelancers or a partner
-agency get accounts.
-
-**First slice.** Decide the policy first (own customers only? region? none?),
-write it down in `docs/role-access-matrix.md`, then enforce it in one place —
-a `scopeForUser(session)` helper every query goes through — and cover it with an
-authorization-matrix e2e spec asserting the *negative* cases.
-
-**Size.** Medium. The e2e coverage is the important half.
-
----
-
-## 8. Import from the existing spreadsheet / SaleVali customer list
-
-**Why.** There are already customers. Until they are in the CRM, the CRM is a
-parallel universe and the team keeps using the spreadsheet.
-
-**First slice.** `scripts/import-csv.mjs`: company, contact, country, channels,
-stage; dry-run by default, `--commit` to write, idempotent on VAT ID. Report
-what it would change before it changes anything.
-
-**Size.** Small–medium, and it is what makes the tool real for the team.
-
----
-
-## 9. E2E result emails and a stress test
-
-**Why.** `e2e-full.yml` runs twice a day and reports into the Actions tab, which
-nobody watches. The reference project emails a summary after every scheduled
-run (`scripts/e2e-report-email.mjs`) — heartbeat when green, failing specs with
-error snippets when red. `scripts/send-alert-email.mjs` is already ported, so
-half the work is done.
-
-**First slice.** Merge the sharded blob reports, render a summary, send it to
-`ALERT_EMAIL_TO`. Then a small `scripts/stress-test.mjs` hitting `/api/health`
-and the customer list to catch response-time regressions.
-
-**Size.** Small.
-
----
-
-## 10. GDPR / data-protection surface
-
-**Why.** The records are named people at German companies, and SaleVali's own
-selling points are GoBD / DSGVO compliance. A CRM that cannot answer "delete
-everything about this person" is a liability for the same customers it is meant
-to win.
-
-**First slice.** A documented retention policy (`docs/DATA_ACCESS_POLICY.md`),
-an admin-only "erase contact" action that removes the person while keeping the
-company aggregate, and an access log for who read which customer record.
-
-**Size.** Medium. Get it in place before the first freelancer account.
+- Read `CLAUDE.md` first, then the specific file for the epic.
+- One task, one PR. If a task turns out to hide a second concern, split it and
+  say so in the PR.
+- Anything that writes `Customer.stage` goes through `lifecycleTimestampsFor()`
+  and records a `StageChange` — see `src/lib/lifecycle.ts`.
+- New behaviour on a critical path needs an e2e spec. `docs/testing.md` covers
+  the `waitForURL()` trap that will otherwise cost you an afternoon.
+- A Prisma rename lands as `DROP COLUMN` in production. Say so in the PR.
