@@ -27,7 +27,7 @@ export const dynamic = "force-dynamic";
  * the deploy gate reads `sha` from here, and defaulting to closed would blind
  * it before anyone had configured a token.
  */
-async function maySeeDetail(request: Request): Promise<boolean> {
+async function maySeeDetailFor(request: Request): Promise<boolean> {
   const expected = process.env.HEALTH_TOKEN;
 
   if (!expected) {
@@ -52,9 +52,18 @@ export async function GET(request: Request) {
   const started = Date.now();
   const params = new URL(request.url).searchParams;
 
+  // Authorize BEFORE doing any of the optional work. `?db=1` and `?smtp=1` are
+  // query parameters, so letting them decide on their own whether the server
+  // opens a database connection or an SMTP session hands an anonymous caller a
+  // way to make this box do work on demand — and, with `?smtp=1`, to probe the
+  // mail configuration by reading the error back. CodeQL flags exactly this
+  // shape. The subsystem checks are for operators, so gate them on the same
+  // authorization as the detailed fields below.
+  const maySeeDetail = await maySeeDetailFor(request);
+
   let db: "ok" | "error" | "skipped" = "skipped";
 
-  if (params.get("db") === "1") {
+  if (maySeeDetail && params.get("db") === "1") {
     try {
       await prisma.$queryRaw`SELECT 1`;
       db = "ok";
@@ -66,7 +75,7 @@ export async function GET(request: Request) {
   let smtp: "ok" | "error" | "skipped" = "skipped";
   let smtpError: string | undefined;
 
-  if (params.get("smtp") === "1") {
+  if (maySeeDetail && params.get("smtp") === "1") {
     const result = await verifySmtpConnection();
     smtp = result.ok ? "ok" : "error";
     smtpError = result.error;
@@ -78,7 +87,7 @@ export async function GET(request: Request) {
   // An anonymous caller learns whether the app is up, and nothing else. The
   // status code still separates healthy from degraded, which is all an uptime
   // monitor acts on.
-  if (!(await maySeeDetail(request))) {
+  if (!maySeeDetail) {
     return NextResponse.json(
       { status, timestamp: new Date().toISOString() },
       { status: healthy ? 200 : 503 },

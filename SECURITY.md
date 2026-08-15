@@ -30,7 +30,10 @@ ticket.
 - **Health endpoint**: `/api/health` stays public for uptime monitors, but its
   detailed fields (version, git sha, subsystem status) are released only to an
   admin session or a caller holding `HEALTH_TOKEN` — those fields are a
-  ready-made answer to "which CVEs apply to this deployment?".
+  ready-made answer to "which CVEs apply to this deployment?". The optional
+  `?db=1` / `?smtp=1` subsystem checks are gated on the same authorization, so
+  an anonymous caller cannot make the server open a database or SMTP connection
+  on demand, nor read an SMTP error back to probe the mail configuration.
 - **Dependencies**: Dependabot weekly; `npm audit` on every PR, blocking on
   `critical` (`security-audit.yml`).
 - **Static analysis**: CodeQL (`security-extended`) on push, PR and weekly.

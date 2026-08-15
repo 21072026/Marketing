@@ -59,3 +59,25 @@ test("an anonymous caller sees liveness only, not the version or sha", { tag: "@
   const wrong = await request.get("/api/health", { headers: { "X-Health-Token": "not-the-token" } });
   expect((await wrong.json()).version).toBeUndefined();
 });
+
+test("an anonymous caller cannot make the server open a DB or SMTP connection", { tag: "@smoke" }, async ({ request }) => {
+  test.skip(!local, "a deployed env may not have HEALTH_TOKEN configured");
+
+  // `?db=1` and `?smtp=1` are query parameters. If they decided on their own
+  // whether the server opens a database connection or an SMTP session, anyone
+  // could make this box do work on demand — and read the SMTP error back to
+  // probe the mail configuration. The subsystem checks are for operators.
+  const response = await request.get("/api/health?db=1&smtp=1");
+  expect(response.status()).toBe(200);
+
+  const body = await response.json();
+  expect(body.db).toBeUndefined();
+  expect(body.smtp).toBeUndefined();
+  expect(body.smtpError).toBeUndefined();
+
+  // The same request from an operator still does the work.
+  const authorized = await request.get("/api/health?db=1", {
+    headers: { "X-Health-Token": E2E_HEALTH_TOKEN },
+  });
+  expect(["ok", "error"]).toContain((await authorized.json()).db);
+});
