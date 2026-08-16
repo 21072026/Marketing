@@ -181,8 +181,9 @@ compiles on the server. See [`infra/README.md`](infra/README.md).
 
 ## Where the work goes next
 
-[`docs/BACKLOG.md`](docs/BACKLOG.md) — the deferred work, with the reasoning and
-a first slice for each item.
+[`docs/BACKLOG.md`](docs/BACKLOG.md) — 9 epics, 22 stories and 89 tasks, each with a
+German and Turkish summary, a priority and effort rating, "done when" criteria and a
+ready-to-use prompt. 30 of them are marked `good first issue`.
 
 ## Required environment variables
 
