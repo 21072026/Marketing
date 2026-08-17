@@ -26,19 +26,24 @@ Each task also ships a **ready-to-use prompt** — paste it into Claude Code (or
 hand it to a developer) and it contains enough context to start without reading
 the whole repository.
 
+**Everything below is on the board as issues [#3–#122](https://github.com/21072026/Marketing/issues).**
+Hierarchy is wired with task lists in the epic and story bodies, so an epic shows
+its progress as its children close. These files stay the long-form reference: the
+issues carry the same summaries, criteria and prompts.
+
 ## Epics
 
-| # | Epic | Priority | Why it matters | Tasks |
-| --- | --- | --- | --- | --- |
-| [1](backlog/epic-01-import.md) | Import the existing customer base | Urgent | Until the real customers are in, the team keeps using the spreadsheet and the CRM is a parallel universe | 10 |
-| [2](backlog/epic-02-trials.md) | Never lose a trial | Urgent | SaleVali trials run 30 days and never auto-renew — an unattended expiry is a customer lost in silence | 11 |
-| [3](backlog/epic-03-analytics.md) | See the funnel | High | `StageChange` already records every transition; nothing reads it yet | 13 |
-| [4](backlog/epic-04-i18n.md) | German and Turkish UI | High | SaleVali ships DE/EN/TR and the team speaks German and Turkish; the CRM is English-only | 10 |
-| [5](backlog/epic-05-operations.md) | Deploy it and keep it running | High | The pipeline is written but has never run: no server, no runner, no backups on a schedule | 9 |
-| [6](backlog/epic-06-access.md) | Access control and data protection | High | Every role sees every customer, nothing is logged, and there is no way to erase a person | 8 |
-| [7](backlog/epic-07-workflow.md) | Daily workflow | Medium | A customer cannot be edited after creation. The tool has to be pleasant or it will not be used | 13 |
-| [8](backlog/epic-08-quality.md) | Test coverage and guardrails | Medium | Six flows are covered; invitations, campaigns and role gating are not | 7 |
-| [9](backlog/epic-09-product-signals.md) | Signals from the SaleVali product | Low | Usage is the strongest churn predictor, and today every number is typed in by hand | 8 |
+| # | Epic | Issue | Priority | Why it matters | Tasks |
+| --- | --- | --- | --- | --- | --- |
+| [1](backlog/epic-01-import.md) | Import the existing customer base | [#3](https://github.com/21072026/Marketing/issues/3) | Urgent | Until the real customers are in, the team keeps using the spreadsheet and the CRM is a parallel universe | 10 |
+| [2](backlog/epic-02-trials.md) | Never lose a trial | [#16](https://github.com/21072026/Marketing/issues/16) | Urgent | SaleVali trials run 30 days and never auto-renew — an unattended expiry is a customer lost in silence | 11 |
+| [3](backlog/epic-03-analytics.md) | See the funnel | [#31](https://github.com/21072026/Marketing/issues/31) | High | `StageChange` already records every transition; nothing reads it yet | 13 |
+| [4](backlog/epic-04-i18n.md) | German and Turkish UI | [#48](https://github.com/21072026/Marketing/issues/48) | High | SaleVali ships DE/EN/TR and the team speaks German and Turkish; the CRM is English-only | 10 |
+| [5](backlog/epic-05-operations.md) | Deploy it and keep it running | [#62](https://github.com/21072026/Marketing/issues/62) | High | The pipeline is written but has never run: no server, no runner, no backups on a schedule | 9 |
+| [6](backlog/epic-06-access.md) | Access control and data protection | [#74](https://github.com/21072026/Marketing/issues/74) | High | Every role sees every customer, nothing is logged, and there is no way to erase a person | 8 |
+| [7](backlog/epic-07-workflow.md) | Daily workflow | [#85](https://github.com/21072026/Marketing/issues/85) | Medium | A customer cannot be edited after creation. The tool has to be pleasant or it will not be used | 13 |
+| [8](backlog/epic-08-quality.md) | Test coverage and guardrails | [#102](https://github.com/21072026/Marketing/issues/102) | Medium | Six flows are covered; invitations, campaigns and role gating are not | 7 |
+| [9](backlog/epic-09-product-signals.md) | Signals from the SaleVali product | [#112](https://github.com/21072026/Marketing/issues/112) | Low | Usage is the strongest churn predictor, and today every number is typed in by hand | 8 |
 
 **9 epics · 22 stories · 89 tasks**, of which **30** are marked `good first issue`.
 
