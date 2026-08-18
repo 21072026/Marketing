@@ -4,13 +4,14 @@ name: Deploy prod (hosted build → server swap)
 # (build-image.yml) and pushed to ghcr; the server only pulls it and swaps the
 # container. Nothing compiles on the production box — keep it that way.
 #
-# HOW IT TRIGGERS
+# HOW IT TRIGGERS — currently MANUAL ONLY, see the `on:` block for why.
+#   manual         → deploy any branch/tag/SHA, unconditionally.
+# Once a runner exists, the two commented triggers come back:
 #   push to main   → deploy (PRs already passed the smoke gate before merging)
 #   every 6 hours  → deploy ONLY if prod drifted from origin/main; the
 #                    self-hosted runner can be offline when a push arrives and
 #                    that deploy would otherwise be lost silently. A no-op when
 #                    prod is already current.
-#   manual         → deploy any branch/tag/SHA, unconditionally.
 #
 # PREREQUISITES (one-time, on the server):
 #   1. Register a self-hosted runner for this repo (Settings → Actions → Runners)
@@ -22,11 +23,22 @@ name: Deploy prod (hosted build → server swap)
 # Until both exist this workflow cannot run; that is deliberate — the
 # alternative is putting an SSH key and every application secret into GitHub.
 on:
-  push:
-    branches: [main]
-  schedule:
+  # DISPATCH-ONLY UNTIL THE SERVER EXISTS.
+  #
+  # The gate and deploy jobs need `runs-on: self-hosted`, and no runner is
+  # registered yet (#65 sets one up). With `push:` armed, every merge to main
+  # queued a run that waited for a runner that will never answer and then failed
+  # hours later — a permanently red main that says nothing about the code.
+  #
+  # Re-enable the `push:` and `schedule:` triggers below as the last step of
+  # #62, once a runner is live and the env file is in place. Until then this
+  # workflow is still runnable by hand, which is what #65 asks for.
+  #
+  # push:
+  #   branches: [main]
+  # schedule:
     # Drift safety net.
-    - cron: "53 */6 * * *"
+  # - cron: "53 */6 * * *"
   workflow_dispatch:
     inputs:
       ref:
