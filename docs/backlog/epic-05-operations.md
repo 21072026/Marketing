@@ -36,6 +36,9 @@ nothing is real until it is deployed.
 - Its user can run `docker` and read `/etc/salevali-crm/*.env`.
 - `infra/README.md` records what was actually done, including anything that
   differed from the instructions.
+- The `push:` and `schedule:` triggers are uncommented in `deploy-prod.yml` and
+  `deploy-preview.yml` — they are dispatch-only until a runner exists, because a
+  run waiting for a runner that never answers just fails hours later.
 
 **Prompt**
 

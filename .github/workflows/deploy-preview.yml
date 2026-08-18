@@ -7,14 +7,26 @@ name: Deploy preview (tracks main)
 #
 # Preview runs its own container, its own port and its own database. It is NOT a
 # per-PR environment; a PR gets the CI + smoke gate, and preview shows what main
-# currently looks like.
+# currently looks like — once it tracks main again; it is manual-only for now,
+# see the `on:` block.
 on:
-  push:
-    branches: [main]
-  schedule:
+  # DISPATCH-ONLY UNTIL THE SERVER EXISTS.
+  #
+  # The gate and deploy jobs need `runs-on: self-hosted`, and no runner is
+  # registered yet (#65 sets one up). With `push:` armed, every merge to main
+  # queued a run that waited for a runner that will never answer and then failed
+  # hours later — a permanently red main that says nothing about the code.
+  #
+  # Re-enable the `push:` and `schedule:` triggers below as the last step of
+  # #62, once a runner is live and the env file is in place. Until then this
+  # workflow is still runnable by hand, which is what #65 asks for.
+  #
+  # push:
+  #   branches: [main]
+  # schedule:
     # Drift safety net, offset from deploy-prod.yml's so the two do not contend
     # for the single self-hosted runner.
-    - cron: "23 */6 * * *"
+  # - cron: "23 */6 * * *"
   workflow_dispatch:
     inputs:
       ref:
