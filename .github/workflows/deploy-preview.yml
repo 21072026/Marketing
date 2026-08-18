@@ -1,0 +1,117 @@
+name: Deploy preview (tracks main)
+
+# The always-current staging environment. Same shape as the production deploy —
+# hosted build, server-side swap — with the gates dialled down: preview exists to
+# be experimented on, so a failed backup or a destructive schema change warns
+# instead of stopping the deploy (see infra/deploy-prod.sh, which both use).
+#
+# Preview runs its own container, its own port and its own database. It is NOT a
+# per-PR environment; a PR gets the CI + smoke gate, and preview shows what main
+# currently looks like.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Drift safety net, offset from deploy-prod.yml's so the two do not contend
+    # for the single self-hosted runner.
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/tag/SHA to deploy to preview (default: main)"
+        required: false
+        default: "main"
+
+concurrency:
+  group: deploy-preview-self-hosted
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Check for drift
+    runs-on: self-hosted
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide whether a deploy is needed
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ inputs.ref || 'main' }}
+          HEALTH_URL: http://127.0.0.1:3301/api/health
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            SHA="$(git ls-remote origin "refs/heads/$REF" | cut -f1)"
+            [ -n "$SHA" ] || SHA="$(git ls-remote origin "refs/tags/$REF" | cut -f1)"
+            [ -n "$SHA" ] || SHA="$REF"
+          else
+            SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+          fi
+          [ -n "$SHA" ] || { echo "could not resolve '$REF'" >&2; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          TARGET="${SHA:0:7}"
+
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          HEALTH_ENV="${ENV_FILE:-/etc/salevali-crm/preview.env}"
+          [ -r "$HEALTH_ENV" ] && HEALTH_TOKEN="$( set -a; . "$HEALTH_ENV" >/dev/null 2>&1; printf '%s' "${HEALTH_TOKEN:-}" )"
+          if [ -n "${HEALTH_TOKEN:-}" ]; then
+            LIVE="$(curl -fsS --max-time 10 -H "X-Health-Token: $HEALTH_TOKEN" "$HEALTH_URL" \
+                    | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+          else
+            LIVE="$(curl -fsS --max-time 10 "$HEALTH_URL" \
+                    | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+          fi
+
+          if [ "$LIVE" = "$TARGET" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "### Preview already current at \`$TARGET\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "### Preview drifted: live \`${LIVE:-unreachable}\` → deploying \`$TARGET\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build:
+    name: Build image
+    needs: gate
+    if: needs.gate.outputs.deploy == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      ref: ${{ needs.gate.outputs.sha }}
+      tag: preview-${{ needs.gate.outputs.sha }}
+      app_env: preview
+
+  deploy:
+    name: Swap preview container
+    needs: [gate, build]
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+      - name: Deploy
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x infra/deploy-prod.sh
+          # No FORWARD_ONLY: preview is allowed to deploy an arbitrary ref.
+          CONTAINER=salevali-crm-preview \
+          PORT=3301 \
+          NETWORK=bridge \
+          ENV_FILE="${ENV_FILE:-/etc/salevali-crm/preview.env}" \
+          ./infra/deploy-prod.sh --no-pull --pull-image

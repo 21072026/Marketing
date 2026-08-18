@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint · Typecheck · Build
+    runs-on: ubuntu-latest
+    env:
+      # The Prisma client instantiates lazily and the build never connects, but a
+      # valid-format URL is required for `prisma validate` and `next build`.
+      DATABASE_URL: "mysql://user:pass@127.0.0.1:3306/db"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      # The deploy scripts never run in CI, so their decision logic — "is this
+      # dump real?" and "does this schema change destroy data?" — would otherwise
+      # have no coverage at all until it mattered on the server.
+      - name: backup dump validation
+        run: bash infra/test/backup-db.test.sh
+      - name: schema guard pattern
+        run: bash infra/test/schema-guard.test.sh
+      - run: npm run build
