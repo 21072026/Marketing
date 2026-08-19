@@ -3,6 +3,27 @@
 How the SaleVali Marketing CRM gets from a merge to a running container, and the
 gates that stop a deploy from destroying data.
 
+## Environments
+
+| Environment | URL | Workflow | Container | Port | DB |
+| --- | --- | --- | --- | --- | --- |
+| **Test** (tracks `main`) | https://marketing.ersah.in | `deploy-test.yml` — auto on every merge | `salevali-crm-marketing` | 3300 | shared **test** DB |
+| **Per-PR** | https://marketing-pr\<N\>.ersah.in | `pr-preview.yml` — auto per PR, torn down on close | `salevali-crm-marketing-pr<N>` | 3500 + N%100 | shared **test** DB |
+| **Production** | *server & domain TBD* | `deploy-prod.yml` — dispatch-only until the live server exists | `salevali-crm` | 3300 (its own box) | live DB |
+
+Everything on ersah.in reads `/etc/salevali-crm/test.env` and only ever touches
+the **test database**. Live data will get its own server, domain and env file;
+until then `deploy-prod.yml` stays manual-only.
+
+Port choices on the ersah.in box are deliberate: the Internship CRM holds
+3200–3202 and 3400–3499, and MariaDB sits on 3306 — so marketing takes the
+single fixed 3300 plus the 3500–3599 block for PR slots.
+
+Test sign-in: `admin@ersah.in` / the team-known test password, recreated on
+every deploy by `prisma/seed-demo.mjs` together with ~17 demo merchants
+(idempotent, guarded by `ALLOW_DEMO_SEED=1` so it can never run against a
+database whose env file does not opt in).
+
 ## Shape of a deploy
 
 ```
@@ -11,24 +32,38 @@ push to main
    ├─ CI (lint · typecheck · infra tests · build)        GitHub-hosted
    ├─ E2E smoke gate (MySQL service, Playwright)         GitHub-hosted
    │
-   └─ deploy-prod.yml
-        ├─ gate    : is prod already on this commit?     self-hosted (on the server)
+   ├─ deploy-test.yml                                    → marketing.ersah.in
+   │    ├─ build   : docker build → ghcr.io              GitHub-hosted
+   │    └─ deploy  : SSH into ersah.in, pipe the         GitHub-hosted
+   │                 server scripts: pull + db push +
+   │                 seed + swap + Plesk route + health
+   │
+   └─ deploy-prod.yml (future live server, manual)
+        ├─ gate    : is prod already on this commit?     self-hosted
         ├─ build   : docker build → ghcr.io              GitHub-hosted
-        └─ deploy  : pull + backup + schema guard +      self-hosted (on the server)
+        └─ deploy  : pull + backup + schema guard +      self-hosted
                      db push + container swap + health
 ```
 
 **Nothing compiles on the server.** The image is the only artifact that crosses
 over; the server pulls it, swaps its container, and health-checks the result.
 
-`preview` is the same pipeline with the gates dialled down — see
-`deploy-preview.yml`. It tracks `main` and exists to be experimented on.
+The test path needs **no self-hosted runner**: the deploy job SSHes in from a
+GitHub-hosted runner and pipes `infra/server/*.sh` to `bash -s`
+(`infra/run-over-ssh.sh`), so the server never needs a checkout of this repo
+either. The Internship CRM's original deploy ran this exact shape for a year on
+the same box. The future live server may still get a runner (that story is in
+the backlog), but the day-to-day test deploys do not wait for it.
 
 ## Scripts
 
 | Script | What it does |
 | --- | --- |
-| `deploy-prod.sh` | The whole server-side deploy: pull, back up, guard, `prisma db push`, swap the container, health-check, record the deployed sha. Drives prod *and* preview — the caller only changes `CONTAINER`, `PORT`, `NETWORK` and `ENV_FILE`. |
+| `deploy-prod.sh` | The gated server-side deploy for the future live server: pull, back up, guard, `prisma db push`, swap the container, health-check, record the deployed sha. |
+| `server/subdomain-deploy.sh` | The test-side deploy: pull, `db push` (no gates — the test DB is disposable), seed admin + demo data, swap the container, create/refresh the Plesk subdomain + wildcard cert + reverse proxy. Used by both `deploy-test.yml` and `pr-preview.yml`. |
+| `server/subdomain-teardown.sh` | Removes a PR environment (container, image, Plesk subdomain) when its PR closes. |
+| `server/bootstrap-test-env.sh` | First-deploy-only: creates the test database and `/etc/salevali-crm/test.env` (secrets generated on the server, never in GitHub). A `test -f` no-op afterwards. |
+| `run-over-ssh.sh` | Pipes one of the server scripts over SSH with selected env vars serialised into an `export` preamble — secrets travel on stdin, never on a command line. |
 | `backup-db.sh` | `mysqldump → gzip → $BACKUP_DIR/<env>-<stamp>.sql.gz`, then validates the dump and prunes old ones. |
 | `schema-guard.sh` | Asks Prisma what SQL the pending push would run and refuses the deploy if it destroys data. |
 | `test/*.test.sh` | Regression tests for the two gates above. They run in CI, because otherwise their only exercise would be on the server, mid-deploy. |
@@ -69,6 +104,25 @@ only written by this script, so any other deploy path would leave it stale.
 
 ## Server prerequisites (one-time)
 
+### Test server (ersah.in — the box the Internship CRM already runs on)
+
+1. **Actions secrets** on this repo: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`
+   (and `SSH_PORT` if not 22) — the same values the Internship CRM's legacy
+   `deploy.yml` used. The SSH user must be able to run `docker` **and the
+   `plesk` CLI** (the deploy creates subdomains and injects the reverse proxy);
+   in practice that means root, which is what the Internship deploys used.
+2. **Wildcard DNS + cert**: `*.ersah.in` already points at the box and the
+   wildcard cert is maintained for the Internship CRM — nothing new needed.
+3. Nothing else. The first deploy runs `server/bootstrap-test-env.sh`, which
+   creates the `salevali_crm_test` database (via `plesk db`) and writes
+   `/etc/salevali-crm/test.env` with generated secrets. The file carries
+   `DATABASE_URL`, `NEXTAUTH_SECRET`, `HEALTH_TOKEN` and `ALLOW_DEMO_SEED=1`;
+   add `SMTP_*` by hand later if test mail is ever wanted. `NEXTAUTH_URL` is
+   **not** read from this file — each environment derives it from its own
+   subdomain, which is what makes one env file serve them all.
+
+### Live server (future — domain and box still to be decided)
+
 1. **Self-hosted runner** registered for this repo, installed as a service. The
    runner's user must be able to run `docker` and read the env file.
 2. **Env file** at `/etc/salevali-crm/prod.env`, `chmod 600`:
@@ -92,8 +146,8 @@ only written by this script, so any other deploy path would leave it stale.
    callers. Leave it unset and the endpoint stays fully public — which is the
    default so the deploy gate is never blinded before anyone configures it.
 
-3. **Ports**: prod `3300`, preview `3301` (host networking on prod, bridge on
-   preview). Put the reverse proxy in front of those.
+3. **Ports**: prod `3300` on its own box, host networking. Put the reverse
+   proxy in front of it.
 4. **Backups**: `/var/backups/salevali-crm`, created `0700` by the script. The
    dumps contain customer contact data — never copy one into the repo, a preview
    environment, or a ticket.
@@ -104,7 +158,8 @@ only written by this script, so any other deploy path would leave it stale.
 # on the server, from a checkout of the repo
 sudo ENV_FILE=/etc/salevali-crm/prod.env ./infra/deploy-prod.sh
 
-# preview
-sudo CONTAINER=salevali-crm-preview PORT=3301 NETWORK=bridge \
-     ENV_FILE=/etc/salevali-crm/preview.env ./infra/deploy-prod.sh
+# test env by hand (normally deploy-test.yml does this)
+sudo SUBLABEL=marketing PORT=3300 IMAGE=ghcr.io/21072026/marketing:test-<sha> \
+     BASE_DOMAIN=ersah.in ENV_FILE=/etc/salevali-crm/test.env \
+     ./infra/server/subdomain-deploy.sh
 ```

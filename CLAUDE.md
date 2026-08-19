@@ -22,7 +22,7 @@ the wrong way.
 - **NextAuth 4** (Credentials provider, JWT sessions, bcrypt)
 - **Tailwind CSS**, **lucide-react**, **zod**
 - **Nodemailer** (SMTP) for invitations
-- Containerized (**Docker**), deployed via GitHub Actions to a self-hosted runner
+- Containerized (**Docker**), deployed via GitHub Actions over SSH
 
 ## Commands
 
@@ -34,6 +34,7 @@ npx tsc --noEmit     # typecheck
 npx prisma generate  # regenerate client (also runs on postinstall)
 npx prisma db push   # sync schema to DB (this project uses db push, NOT migrations)
 npx prisma db seed   # create the first ADMIN from SEED_ADMIN_*
+npm run seed:demo    # demo merchants + admin@ersah.in (needs ALLOW_DEMO_SEED=1)
 
 npm run test:e2e         # full Playwright suite (starts the app itself)
 npm run test:e2e:smoke   # the @smoke subset — what the PR gate runs
@@ -105,10 +106,15 @@ length, because getting it wrong produces failures that look like app bugs.
 ## Deployment
 
 The image is **built on a GitHub-hosted runner** (`build-image.yml`, pushed to
-ghcr.io) and the server's **self-hosted runner** only pulls it, backs up the
-database, runs the destructive-schema guard, `prisma db push`, swaps the
-container and health-checks it. **Nothing compiles on the server** — keep it that
-way. See `infra/README.md`.
+ghcr.io); the deploy job then **SSHes into the server** and pipes
+`infra/server/*.sh` to `bash -s`, so the box only pulls and swaps. **Nothing
+compiles on the server** — keep it that way. See `infra/README.md`.
+
+Environments: `deploy-test.yml` → https://marketing.ersah.in on every merge to
+main, `pr-preview.yml` → https://marketing-pr<N>.ersah.in per PR (torn down on
+close). Both share one **test database** and reseed the demo data. The future
+live server uses `deploy-prod.yml` (manual until it exists), which also backs up
+the database and runs the destructive-schema guard before the schema sync.
 
 Two gates protect the data, and they are the reason a deploy can refuse to
 proceed: a failed backup and a data-destroying schema diff both stop production

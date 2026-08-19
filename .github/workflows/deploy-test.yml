@@ -1,0 +1,131 @@
+name: Deploy test (marketing.ersah.in, tracks main)
+
+# The test environment: https://marketing.ersah.in — redeployed automatically on
+# every merge to main. It connects to the SHARED TEST DATABASE
+# (/etc/salevali-crm/test.env on the server), never to live data; the future
+# live server gets its own domain, env file and the gated deploy-prod.yml path.
+#
+# HOW IT REACHES THE SERVER: the image is built on a GitHub-hosted runner
+# (build-image.yml) and pushed to ghcr; the deploy job then SSHes into the
+# ersah.in box and pipes infra/server/*.sh to `bash -s`. No self-hosted runner
+# is involved and nothing compiles on the server — this is the same shape the
+# Internship CRM's original deploy.yml ran for a year on this machine.
+#
+# PREREQUISITES:
+#   1. Actions secrets SSH_HOST, SSH_USER, SSH_PRIVATE_KEY (and SSH_PORT if not
+#      22) — the same values the Internship CRM's legacy deploy used. The
+#      deploy job fails fast with a named list if any are missing.
+#   2. Wildcard DNS *.ersah.in → the server (already in place for the
+#      Internship CRM's PR environments).
+#   The test DB and /etc/salevali-crm/test.env are NOT prerequisites: the first
+#   deploy creates them via infra/server/bootstrap-test-env.sh (idempotent).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/tag/SHA to deploy (default: main)"
+        required: false
+        default: "main"
+
+# Never cancel mid-swap — queue instead.
+concurrency:
+  group: deploy-test-env
+  cancel-in-progress: false
+
+env:
+  BASE_DOMAIN: ersah.in
+  ENV_FILE: /etc/salevali-crm/test.env
+
+jobs:
+  build:
+    name: Build image
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      ref: ${{ github.event.inputs.ref || github.sha }}
+      tag: test-${{ github.event.inputs.ref || github.sha }}
+      app_env: preview
+
+  deploy:
+    name: Deploy over SSH
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+
+      # Fail fast with a named list instead of a cryptic ssh error later.
+      - name: Check deploy secrets
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$SSH_HOST" ]        || missing="$missing SSH_HOST"
+          [ -n "$SSH_USER" ]        || missing="$missing SSH_USER"
+          [ -n "$SSH_PRIVATE_KEY" ] || missing="$missing SSH_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Actions secrets:${missing}. Add them under Settings → Secrets and variables → Actions (same values the Internship CRM's deploy used), then re-run."
+            exit 1
+          fi
+
+      - name: Set up SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # Via env var, not inline interpolation, to preserve the exact OpenSSH
+          # format; tr strips Windows CRs that corrupt a pasted key.
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H -p "${SSH_PORT:-22}" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # First run only: creates the test DB + /etc/salevali-crm/test.env on the
+      # server. Every later run is a `test -f` no-op.
+      - name: Bootstrap test env (idempotent)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          chmod +x infra/run-over-ssh.sh
+          SSH_KEY_FILE=$HOME/.ssh/deploy_key ./infra/run-over-ssh.sh infra/server/bootstrap-test-env.sh
+
+      - name: Deploy marketing.${{ env.BASE_DOMAIN }}
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SUBLABEL: marketing
+          PORT: "3300"
+          IMAGE: ${{ needs.build.outputs.image }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SSH_KEY_FILE=$HOME/.ssh/deploy_key ./infra/run-over-ssh.sh \
+            infra/server/subdomain-deploy.sh \
+            SUBLABEL PORT IMAGE BASE_DOMAIN ENV_FILE GHCR_USER GHCR_TOKEN
+
+      - name: Verify from the outside
+        run: |
+          # Through Cloudflare/DNS, not the tunnel — this is what a user gets.
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://marketing.${BASE_DOMAIN}/api/health" || echo ERR)
+            echo "attempt $i: /api/health -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 5
+          done
+          echo "::error::https://marketing.${BASE_DOMAIN}/api/health never answered 200"
+          exit 1
