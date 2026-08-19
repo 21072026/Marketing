@@ -174,10 +174,19 @@ spec that is not flaky.
 
 ## Deployment
 
-The image is built on a GitHub-hosted runner and pushed to ghcr.io; the server's
-self-hosted runner pulls it, backs up the database, runs the destructive-schema
-guard, applies the schema, swaps the container and health-checks it. Nothing
-compiles on the server. See [`infra/README.md`](infra/README.md).
+| Environment | URL | When |
+| --- | --- | --- |
+| Test (tracks `main`) | https://marketing.ersah.in | automatically, on every merge |
+| Per-PR | https://marketing-pr\<N\>.ersah.in | automatically per PR, torn down on close |
+| Production | *server & domain TBD* | manual only, until the live server exists |
+
+All ersah.in environments share one **test database**, reseeded with demo data
+on every deploy (`npm run seed:demo`); test sign-in is `admin@ersah.in`. The
+image is built on a GitHub-hosted runner and pushed to ghcr.io; the server's
+self-hosted runner only pulls and swaps — nothing compiles on the server. The
+future production path additionally backs up the database and runs the
+destructive-schema guard before every schema sync. See
+[`infra/README.md`](infra/README.md).
 
 ## Where the work goes next
 

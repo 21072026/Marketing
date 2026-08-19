@@ -1,0 +1,77 @@
+name: Deploy test (marketing.ersah.in, tracks main)
+
+# The test environment: https://marketing.ersah.in — redeployed automatically on
+# every merge to main. It connects to the SHARED TEST DATABASE
+# (/etc/salevali-crm/test.env), never to live data; the future live server gets
+# its own domain, env file and the gated deploy-prod.yml path.
+#
+# The image is BUILT ON A GITHUB-HOSTED RUNNER (build-image.yml) and pushed to
+# ghcr; the self-hosted runner on the ersah.in box only pulls it, syncs the
+# schema, reseeds the demo data and swaps the container. Nothing compiles on
+# the server.
+#
+# PREREQUISITES (one-time, on the ersah.in server — see infra/README.md):
+#   1. A self-hosted runner registered for THIS repo, running as a service,
+#      whose user can run docker and the `plesk` CLI. Until it exists, runs
+#      queue here and time out — that is the expected failure mode, not a code
+#      problem.
+#   2. /etc/salevali-crm/test.env (chmod 600) with DATABASE_URL (test DB),
+#      NEXTAUTH_SECRET, SMTP_*, HEALTH_TOKEN, SEED_ADMIN_*, ALLOW_DEMO_SEED=1.
+#   3. Wildcard DNS *.ersah.in → the server, and the wildcard TLS cert the
+#      Internship CRM already maintains on this box.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/tag/SHA to deploy (default: main)"
+        required: false
+        default: "main"
+
+# Never cancel mid-swap — queue instead.
+concurrency:
+  group: deploy-test-self-hosted
+  cancel-in-progress: false
+
+env:
+  BASE_DOMAIN: ersah.in
+  ENV_FILE: /etc/salevali-crm/test.env
+
+jobs:
+  build:
+    name: Build image
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      ref: ${{ github.event.inputs.ref || github.sha }}
+      tag: test-${{ github.event.inputs.ref || github.sha }}
+      app_env: preview
+
+  deploy:
+    name: Swap test container
+    needs: build
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+
+      - name: Deploy marketing.${{ env.BASE_DOMAIN }}
+        env:
+          SUBLABEL: marketing
+          PORT: "3300"
+          IMAGE: ${{ needs.build.outputs.image }}
+          BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
+          ENV_FILE: ${{ env.ENV_FILE }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x infra/server/subdomain-deploy.sh
+          ./infra/server/subdomain-deploy.sh

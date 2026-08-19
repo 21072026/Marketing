@@ -17,7 +17,8 @@
     "seed": "node prisma/seed.mjs",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test --grep @smoke",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "seed:demo": "node prisma/seed-demo.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.16.1",

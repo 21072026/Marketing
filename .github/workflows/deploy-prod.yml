@@ -1,8 +1,16 @@
 name: Deploy prod (hosted build → server swap)
 
-# Production deploy. The image is BUILT ON A GITHUB-HOSTED RUNNER
-# (build-image.yml) and pushed to ghcr; the server only pulls it and swaps the
-# container. Nothing compiles on the production box — keep it that way.
+# Production deploy — FOR THE FUTURE LIVE SERVER, which does not exist yet.
+# The live-data server and its domain are still to be decided; until then the
+# test setup (deploy-test.yml → marketing.ersah.in, pr-preview.yml →
+# marketing-pr<N>.ersah.in) is the only thing that deploys, and it only ever
+# touches the test database.
+#
+# The image is BUILT ON A GITHUB-HOSTED RUNNER (build-image.yml) and pushed to
+# ghcr; the server only pulls it and swaps the container. Nothing compiles on
+# the production box — keep it that way. Unlike the test path, this one runs
+# the full data gates in infra/deploy-prod.sh: backup before schema sync, and
+# a destructive-schema diff stops the deploy.
 #
 # HOW IT TRIGGERS — currently MANUAL ONLY, see the `on:` block for why.
 #   manual         → deploy any branch/tag/SHA, unconditionally.
@@ -30,9 +38,9 @@ on:
   # queued a run that waited for a runner that will never answer and then failed
   # hours later — a permanently red main that says nothing about the code.
   #
-  # Re-enable the `push:` and `schedule:` triggers below as the last step of
-  # #62, once a runner is live and the env file is in place. Until then this
-  # workflow is still runnable by hand, which is what #65 asks for.
+  # Re-enable the `push:` and `schedule:` triggers below once the LIVE server
+  # exists: runner registered, /etc/salevali-crm/prod.env in place, domain
+  # decided (#62). Until then this workflow is runnable by hand only.
   #
   # push:
   #   branches: [main]

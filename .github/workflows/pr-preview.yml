@@ -1,0 +1,133 @@
+name: PR preview (marketing-pr<N>.ersah.in)
+
+# Per-PR ephemeral environments, following the Internship CRM's topic-preview
+# pattern worked out on the same server:
+#   PR #12 → container salevali-crm-marketing-pr12 on a dedicated port →
+#            https://marketing-pr12.ersah.in  (wildcard *.ersah.in DNS + TLS)
+# A bot comment on the PR carries the URL (updated on every push). When the PR
+# is merged or closed, the environment is torn down.
+#
+# ⚠️ Every PR env shares ONE TEST DATABASE with marketing.ersah.in — a schema
+# `db push` from any PR affects all of them. Coordinate concurrent schema
+# changes. Live data never comes near these environments.
+#
+# The image is built on a GitHub-hosted runner; the server only pulls and swaps.
+#
+# FORK PRs get no environment: GitHub keeps their GITHUB_TOKEN read-only (the
+# image cannot be pushed to ghcr), withholds secrets, and running unreviewed
+# fork code on the server is not something to work around. ci.yml + e2e.yml
+# still gate those PRs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+# One in-flight run per PR; a new push cancels the previous deploy.
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  BASE_DOMAIN: ersah.in
+  ENV_FILE: /etc/salevali-crm/test.env
+
+jobs:
+  # ── Build (GitHub-hosted — the expensive part) ──────────────────────────────
+  build:
+    name: Build image
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      # The PR branch tip, not the synthetic merge commit: the env exists to
+      # show the author their own commit, and this sha is what /api/health
+      # reports.
+      ref: ${{ github.event.pull_request.head.sha }}
+      tag: pr${{ github.event.pull_request.number }}
+      app_env: preview
+
+  # ── Deploy / update (PR opened, pushed to, or reopened) ─────────────────────
+  deploy:
+    name: Deploy PR environment
+    needs: build
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write
+    steps:
+      - name: Derive subdomain + port from the PR number
+        id: t
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          echo "sublabel=marketing-pr${PR}" >> "$GITHUB_OUTPUT"
+          # Deterministic port in 3500–3599. Chosen to be clear of everything
+          # already on this box: the Internship CRM holds 3200–3202 and its PR
+          # envs hold 3400–3499, MariaDB sits on 3306 (which is why 3300–3399
+          # is used only for the single fixed 3300), and marketing.ersah.in is
+          # 3300. PRs whose numbers collide mod 100 would clash — fine at our
+          # volume, the older PR's env just gets replaced.
+          echo "port=$((3500 + PR % 100))" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy
+        env:
+          SUBLABEL: ${{ steps.t.outputs.sublabel }}
+          PORT: ${{ steps.t.outputs.port }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
+          ENV_FILE: ${{ env.ENV_FILE }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x infra/server/subdomain-deploy.sh
+          ./infra/server/subdomain-deploy.sh
+
+      - name: Comment the URL on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sublabel = '${{ steps.t.outputs.sublabel }}';
+            const url = `https://${sublabel}.${{ env.BASE_DOMAIN }}`;
+            const marker = '<!-- pr-preview -->';
+            const body = `${marker}\n### 🧪 Test environment ready\n\n` +
+              `Branch **\`${{ github.head_ref }}\`** → **${url}**\n\n` +
+              `> Rebuilt on every push; torn down when this PR is merged or closed.\n` +
+              `> Sign in: \`admin@ersah.in\` (test admin). Connected to the shared **test** database — ` +
+              `never live data — so a schema change here affects the other test environments too.`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
+
+  # ── Teardown (PR merged / closed) ───────────────────────────────────────────
+  # Runs for fork PRs too: harmless (nothing to remove), and keeping it
+  # unconditional means an environment can never outlive its PR.
+  teardown:
+    name: Tear down PR environment
+    if: github.event.action == 'closed'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tear down
+        env:
+          SUBLABEL: marketing-pr${{ github.event.pull_request.number }}
+          BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
+        run: |
+          chmod +x infra/server/subdomain-teardown.sh
+          ./infra/server/subdomain-teardown.sh
