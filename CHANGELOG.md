@@ -40,6 +40,10 @@ Notable changes, newest first. Dates are the merge date to `main`.
 - `/api/health` with the git sha the deploy gate reads; detailed fields gated on
   `HEALTH_TOKEN`.
 - Security headers (CSP, HSTS, …), CodeQL, `npm audit` gate, Dependabot.
+- `npm run seed` / `npm run seed:demo` read `.env` again. Run straight through
+  `node`, they saw only the exported shell environment, so the documented local
+  workflow hit the demo seed's `ALLOW_DEMO_SEED` guard even with the flag set in
+  `.env`. An explicit shell value still wins, so CI and the deploy are unaffected.
 
 ## 0.1.0
 

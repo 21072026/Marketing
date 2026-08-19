@@ -14,11 +14,11 @@
     "postinstall": "prisma generate",
     "db:dev:up": "docker compose -f docker-compose.dev.yml up -d",
     "db:dev:down": "docker compose -f docker-compose.dev.yml down",
-    "seed": "node prisma/seed.mjs",
+    "seed": "node --env-file-if-exists=.env prisma/seed.mjs",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test --grep @smoke",
     "test:e2e:headed": "playwright test --headed",
-    "seed:demo": "node prisma/seed-demo.mjs"
+    "seed:demo": "node --env-file-if-exists=.env prisma/seed-demo.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.16.1",
