@@ -11,7 +11,9 @@ name: PR preview (marketing-pr<N>.ersah.in)
 # `db push` from any PR affects all of them. Coordinate concurrent schema
 # changes. Live data never comes near these environments.
 #
-# The image is built on a GitHub-hosted runner; the server only pulls and swaps.
+# HOW IT REACHES THE SERVER: image built on a GitHub-hosted runner, then the
+# deploy job SSHes into the box and pipes infra/server/*.sh to `bash -s` — the
+# same secrets and shape as deploy-test.yml; see its header for prerequisites.
 #
 # FORK PRs get no environment: GitHub keeps their GITHUB_TOKEN read-only (the
 # image cannot be pushed to ghcr), withholds secrets, and running unreviewed
@@ -55,7 +57,7 @@ jobs:
   deploy:
     name: Deploy PR environment
     needs: build
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
@@ -78,18 +80,55 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check deploy secrets
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$SSH_HOST" ]        || missing="$missing SSH_HOST"
+          [ -n "$SSH_USER" ]        || missing="$missing SSH_USER"
+          [ -n "$SSH_PRIVATE_KEY" ] || missing="$missing SSH_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Actions secrets:${missing}. Add them under Settings → Secrets and variables → Actions, then re-run."
+            exit 1
+          fi
+
+      - name: Set up SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H -p "${SSH_PORT:-22}" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Bootstrap test env (idempotent)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          chmod +x infra/run-over-ssh.sh
+          SSH_KEY_FILE=$HOME/.ssh/deploy_key ./infra/run-over-ssh.sh infra/server/bootstrap-test-env.sh
+
       - name: Deploy
         env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
           SUBLABEL: ${{ steps.t.outputs.sublabel }}
           PORT: ${{ steps.t.outputs.port }}
           IMAGE: ${{ needs.build.outputs.image }}
-          BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
-          ENV_FILE: ${{ env.ENV_FILE }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          chmod +x infra/server/subdomain-deploy.sh
-          ./infra/server/subdomain-deploy.sh
+          SSH_KEY_FILE=$HOME/.ssh/deploy_key ./infra/run-over-ssh.sh \
+            infra/server/subdomain-deploy.sh \
+            SUBLABEL PORT IMAGE BASE_DOMAIN ENV_FILE GHCR_USER GHCR_TOKEN
 
       - name: Comment the URL on the PR
         uses: actions/github-script@v7
@@ -114,20 +153,37 @@ jobs:
             }
 
   # ── Teardown (PR merged / closed) ───────────────────────────────────────────
-  # Runs for fork PRs too: harmless (nothing to remove), and keeping it
-  # unconditional means an environment can never outlive its PR.
+  # Skipped for fork PRs (no secrets, and no environment was ever deployed);
+  # same-repo PRs always tear down, so an environment can never outlive its PR.
   teardown:
     name: Tear down PR environment
-    if: github.event.action == 'closed'
-    runs-on: self-hosted
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H -p "${SSH_PORT:-22}" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
       - name: Tear down
         env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
           SUBLABEL: marketing-pr${{ github.event.pull_request.number }}
-          BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
         run: |
-          chmod +x infra/server/subdomain-teardown.sh
-          ./infra/server/subdomain-teardown.sh
+          chmod +x infra/run-over-ssh.sh
+          SSH_KEY_FILE=$HOME/.ssh/deploy_key ./infra/run-over-ssh.sh \
+            infra/server/subdomain-teardown.sh \
+            SUBLABEL BASE_DOMAIN

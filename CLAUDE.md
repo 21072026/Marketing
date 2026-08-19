@@ -22,7 +22,7 @@ the wrong way.
 - **NextAuth 4** (Credentials provider, JWT sessions, bcrypt)
 - **Tailwind CSS**, **lucide-react**, **zod**
 - **Nodemailer** (SMTP) for invitations
-- Containerized (**Docker**), deployed via GitHub Actions to a self-hosted runner
+- Containerized (**Docker**), deployed via GitHub Actions over SSH
 
 ## Commands
 
@@ -106,7 +106,8 @@ length, because getting it wrong produces failures that look like app bugs.
 ## Deployment
 
 The image is **built on a GitHub-hosted runner** (`build-image.yml`, pushed to
-ghcr.io) and the server's **self-hosted runner** only pulls and swaps. **Nothing
+ghcr.io); the deploy job then **SSHes into the server** and pipes
+`infra/server/*.sh` to `bash -s`, so the box only pulls and swaps. **Nothing
 compiles on the server** — keep it that way. See `infra/README.md`.
 
 Environments: `deploy-test.yml` → https://marketing.ersah.in on every merge to
